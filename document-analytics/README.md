@@ -139,6 +139,20 @@ When running in Kubernetes mode, the CLI tool will send requests to the API serv
 kubectl port-forward service/document-analytics-api 30080:80
 ```
 
+#### Important Note About Document Glob Patterns
+
+When using glob patterns with the `--documents` parameter, always enclose the pattern in quotes to prevent shell expansion:
+
+```bash
+# CORRECT: Use quotes around glob patterns to prevent shell expansion
+./cli/document_analytics.py --topic=Sport --documents="data/documents/*.md"
+
+# INCORRECT: Without quotes, the shell will expand the glob before passing to the script
+./cli/document_analytics.py --topic=Sport --documents=data/documents/*.md
+```
+
+If you don't use quotes, your shell might expand the glob pattern before passing it to the script, which can lead to unexpected behavior, as the script will receive the expanded list of files instead of the pattern itself, causing argument parsing failure since the script expects a single pattern.
+
 ## Architecture Details
 
 The system is implemented using a dynamic pod deployment approach. The main API service (deployed via api.yaml) uses the Kubernetes API to create and manage the following components:

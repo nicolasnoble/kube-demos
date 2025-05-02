@@ -7,6 +7,7 @@ import zmq
 import logging
 import os
 from typing import Dict, Any
+from flask import Flask, request, jsonify
 
 from doc_analytics_lib import extract_topics, DocumentAnalyticsException
 
@@ -22,21 +23,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger("doc_processor")
 
+# Initialize Flask application
+app = Flask(__name__)
+
+# Global DocumentProcessor instance
+processor = None
+
 
 class DocumentProcessor:
     """Document Processor parses Markdown files and broadcasts content by topic."""
     
-    def __init__(self, rep_address: str = "tcp://*:5555", pub_address: str = "tcp://*:5556"):
+    def __init__(self, pub_address: str = "tcp://*:5556"):
         """Initialize the Document Processor service.
         
         Args:
-            rep_address: ZMQ REP socket address to bind to
             pub_address: ZMQ PUB socket address to bind to for topic broadcasting
         """
-        self.rep_address = rep_address
         self.pub_address = pub_address
-        self.rep_socket = None
         self.pub_socket = None
+        self.initialize_pub_socket()
+        
+    def initialize_pub_socket(self):
+        """Initialize the ZeroMQ PUB socket for topic broadcasting."""
+        try:
+            context = zmq.Context()
+            # Socket to publish topics
+            self.pub_socket = context.socket(zmq.PUB)
+            self.pub_socket.bind(self.pub_address)
+            logger.info(f"Initialized PUB socket: {self.pub_address}")
+        except Exception as e:
+            logger.error(f"Error initializing PUB socket: {str(e)}")
+            raise
     
     def process_document(self, filepath: str) -> Dict[str, Any]:
         """Process a document and broadcast its content by topic.
@@ -132,63 +149,35 @@ class DocumentProcessor:
             content.encode('utf-8')
         ])
         logger.debug(f"Published content for topic: {topic}")
+
+
+# Flask routes for the Document Processor API
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint."""
+    return jsonify({"status": "healthy"})
+
+
+@app.route('/process', methods=['POST'])
+def process_document_api():
+    """API endpoint to process a document."""
+    global processor
     
-    def start_server(self) -> None:
-        """Start the Document Processor server.
-        
-        This method starts both REP and PUB sockets.
-        """
-        context = zmq.Context()
-        
-        # Socket to receive commands
-        self.rep_socket = context.socket(zmq.REP)
-        self.rep_socket.bind(self.rep_address)
-        
-        # Socket to publish topics
-        self.pub_socket = context.socket(zmq.PUB)
-        self.pub_socket.bind(self.pub_address)
-        
-        logger.info(f"Document Processor started:")
-        logger.info(f"  REP socket: {self.rep_address}")
-        logger.info(f"  PUB socket: {self.pub_address}")
-        
-        # Setup poller to handle multiple sockets
-        poller = zmq.Poller()
-        poller.register(self.rep_socket, zmq.POLLIN)
-        
-        try:
-            while True:
-                # Poll for events with timeout (1000ms)
-                socks = dict(poller.poll(1000))
-                
-                # Handle REP socket messages
-                if self.rep_socket in socks:
-                    message = self.rep_socket.recv_json()
-                    logger.info(f"Received request: {message}")
-                    
-                    action = message.get("action")
-                    response = {"status": "error", "message": "Invalid action"}
-                    
-                    if action == "process":
-                        filepath = message.get("filepath")
-                        if filepath:
-                            response = self.process_document(filepath)
-                        else:
-                            response = {"status": "error", "message": "Missing filepath parameter"}
-                    
-                    # Send reply back to client
-                    self.rep_socket.send_json(response)
-                
-        except KeyboardInterrupt:
-            logger.info("Shutting down Document Processor...")
-        finally:
-            if self.rep_socket:
-                self.rep_socket.close()
-            if self.pub_socket:
-                self.pub_socket.close()
-            context.term()
+    data = request.json
+    filepath = data.get('filepath')
+    
+    if not filepath:
+        return jsonify({"status": "error", "message": "Missing filepath parameter"}), 400
+    
+    result = processor.process_document(filepath)
+    return jsonify(result)
 
 
 if __name__ == "__main__":
+    # Create DocumentProcessor instance
     processor = DocumentProcessor()
-    processor.start_server()
+    
+    # Run Flask app
+    port = int(os.environ.get("PORT", 5555))
+    logger.info(f"Starting Document Processor Flask server on port {port}")
+    app.run(host='0.0.0.0', port=port)

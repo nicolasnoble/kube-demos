@@ -68,7 +68,7 @@ def create_worker_queue_deployment():
         dict: Service details including cluster IP
     """
     # Define worker queue deployment configuration
-    ports = [{"container_port": 5555, "name": "zmq"}]
+    ports = [{"container_port": 5555, "name": "http"}]
     command = ["python", "-m", "app.api.worker_queue"]
     
     # Create deployment
@@ -88,7 +88,7 @@ def create_worker_queue_deployment():
         return None
     
     # Create service
-    service_ports = [{"port": 5555, "name": "zmq"}]
+    service_ports = [{"port": 5555, "name": "http"}]
     service = k8s_utils.create_service(
         name="worker-queue",
         component="worker-queue",
@@ -114,7 +114,7 @@ def create_worker_queue_deployment():
     return {
         "name": service.metadata.name,
         "cluster_ip": service.spec.cluster_ip,
-        "address": f"tcp://{service.spec.cluster_ip}:5555"
+        "url": f"http://{service.spec.cluster_ip}:5555"
     }
 
 
@@ -129,8 +129,8 @@ def create_doc_processor_deployment(num_replicas=2):
     """
     # Define document processor deployment configuration
     ports = [
-        {"container_port": 5555, "name": "zmq-rep"},
-        {"container_port": 5556, "name": "zmq-pub"}
+        {"container_port": 5555, "name": "http"},  # HTTP for worker communication
+        {"container_port": 5556, "name": "zmq-pub"}  # ZMQ PUB for topic broadcasting
     ]
     command = ["python", "-m", "app.api.doc_processor"]
     volume_mounts = [
@@ -159,7 +159,7 @@ def create_doc_processor_deployment(num_replicas=2):
         volume_mounts=volume_mounts,
         volumes=volumes,
         replicas=num_replicas,
-        readiness_probe_port=5555,
+        readiness_probe_port=5555,  # HTTP port for readiness probe
         liveness_probe_port=5555
     )
     
@@ -169,8 +169,8 @@ def create_doc_processor_deployment(num_replicas=2):
     
     # Create service
     service_ports = [
-        {"port": 5555, "name": "zmq-rep"},
-        {"port": 5556, "name": "zmq-pub"}
+        {"port": 5555, "name": "http"},  # HTTP for worker communication
+        {"port": 5556, "name": "zmq-pub"}  # ZMQ PUB for topic broadcasting
     ]
     service = k8s_utils.create_service(
         name="doc-processor",
@@ -197,8 +197,8 @@ def create_doc_processor_deployment(num_replicas=2):
     return {
         "name": service.metadata.name,
         "cluster_ip": service.spec.cluster_ip,
-        "rep_address": f"tcp://{service.spec.cluster_ip}:5555",
-        "pub_address": f"tcp://{service.spec.cluster_ip}:5556"
+        "http_url": f"http://{service.spec.cluster_ip}:5555",  # HTTP URL for worker communication
+        "pub_address": f"tcp://{service.spec.cluster_ip}:5556"  # ZMQ PUB address for topic broadcasting
     }
 
 
@@ -277,46 +277,45 @@ def create_topic_aggregator_deployment(topic):
     }
 
 
-def register_workers_with_queue(worker_queue_address):
+def register_workers_with_queue(worker_queue_url):
     """Register document processor workers with the worker queue.
     
     Args:
-        worker_queue_address: Address of the worker queue service
+        worker_queue_url: URL of the worker queue service
     """
     logger.info("Registering document processors with worker queue")
     
     # Get the list of document processor pods
     pods = k8s_utils.list_pods_by_labels("doc-processor")
     
-    context = zmq.Context()
+    # Register each pod with the worker queue using HTTP requests
+    import requests
     
-    # Register each pod with the worker queue
     for pod in pods:
         pod_ip = pod.status.pod_ip
         if pod_ip:
             worker_id = f"processor-{pod.metadata.name}"
-            worker_address = f"tcp://{pod_ip}:5555"
+            worker_url = f"http://{pod_ip}:5555"  # Using HTTP URL instead of ZeroMQ address
             
             try:
-                # Connect to worker queue
-                socket = context.socket(zmq.REQ)
-                socket.connect(worker_queue_address)
+                # Register worker using HTTP POST request with the HTTP URL
+                logger.info(f"Registering worker {worker_id} at {worker_url}")
+                response = requests.post(
+                    f"{worker_queue_url}/register_worker",
+                    json={
+                        "worker": {
+                            "id": worker_id,
+                            "url": worker_url  # Use 'url' instead of 'address' for HTTP communication
+                        }
+                    },
+                    timeout=10
+                )
                 
-                # Register worker
-                logger.info(f"Registering worker {worker_id} at {worker_address}")
-                socket.send_json({
-                    "action": "register_worker",
-                    "worker": {
-                        "id": worker_id,
-                        "address": worker_address
-                    }
-                })
-                
-                # Wait for response
-                response = socket.recv_json()
-                logger.info(f"Registration response: {response}")
-                
-                socket.close()
+                # Check response
+                if response.status_code == 200:
+                    logger.info(f"Registration response: {response.json()}")
+                else:
+                    logger.error(f"Error registering worker {worker_id}: HTTP {response.status_code} - {response.text}")
             
             except Exception as e:
                 logger.error(f"Error registering worker {worker_id}: {e}")
@@ -376,7 +375,7 @@ def deploy_services_async(documents, topics, num_processors):
                 deployment_status["status"] = "error"
                 deployment_status["message"] = "Failed to create worker queue deployment"
                 return
-            logger.info(f"Started worker queue at {worker_queue_service['address']}")
+            logger.info(f"Started worker queue at {worker_queue_service['url']}")
             deployment_status["worker_queue_ready"] = True
             deployment_status["completed_steps"].append("worker_queue")
             deployment_status["pending_steps"].remove("worker_queue")
@@ -390,10 +389,10 @@ def deploy_services_async(documents, topics, num_processors):
                 deployment_status["status"] = "error"
                 deployment_status["message"] = "Failed to create document processor deployment"
                 return
-            logger.info(f"Started document processors at {doc_processor_pods['rep_address']}")
+            logger.info(f"Started document processors at {doc_processor_pods['http_url']}")
             
             # Register document processors with worker queue
-            register_workers_with_queue(worker_queue_service["address"])
+            register_workers_with_queue(worker_queue_service["url"])
             deployment_status["doc_processors_ready"] = True
             deployment_status["completed_steps"].append("doc_processors")
             deployment_status["pending_steps"].remove("doc_processors")
@@ -417,28 +416,47 @@ def deploy_services_async(documents, topics, num_processors):
         
         # Register documents with worker queue and trigger distribution
         if documents:
-            context = zmq.Context()
-            socket = context.socket(zmq.REQ)
-            socket.connect(worker_queue_service["address"])
+            import requests
             
-            # Register documents
+            # Register documents with worker queue using HTTP
             logger.debug(f"Registering {len(documents)} documents with worker queue")
-            socket.send_json({
-                "action": "register_documents",
-                "documents": documents
-            })
-            response = socket.recv_json()
-            logger.debug(f"Registration response: {response}")
-            
-            # Trigger document distribution
-            logger.debug("Triggering document distribution")
-            socket.send_json({
-                "action": "distribute"
-            })
-            distribution_response = socket.recv_json()
-            socket.close()
-            
-            logger.info(f"Document distribution response: {distribution_response}")
+            try:
+                register_response = requests.post(
+                    f"{worker_queue_service['url']}/register_documents",
+                    json={"documents": documents},
+                    timeout=10
+                )
+                
+                if register_response.status_code == 200:
+                    logger.debug(f"Registration response: {register_response.json()}")
+                else:
+                    logger.error(f"Error registering documents: HTTP {register_response.status_code} - {register_response.text}")
+                    deployment_status["status"] = "error"
+                    deployment_status["message"] = f"Error registering documents with worker queue"
+                    return
+                
+                # Trigger document distribution
+                logger.debug("Triggering document distribution")
+                distribute_response = requests.post(
+                    f"{worker_queue_service['url']}/distribute",
+                    json={},
+                    timeout=30  # Longer timeout for distribution which could take time
+                )
+                
+                if distribute_response.status_code == 200:
+                    distribution_result = distribute_response.json()
+                    logger.info(f"Document distribution response: {distribution_result}")
+                else:
+                    logger.error(f"Error distributing documents: HTTP {distribute_response.status_code} - {distribute_response.text}")
+                    deployment_status["status"] = "error"
+                    deployment_status["message"] = f"Error distributing documents to workers"
+                    return
+                
+            except Exception as e:
+                logger.error(f"Error communicating with worker queue: {str(e)}")
+                deployment_status["status"] = "error"
+                deployment_status["message"] = f"Error communicating with worker queue: {str(e)}"
+                return
         
         deployment_status["status"] = "completed"
         deployment_status["message"] = "All services deployed successfully"
