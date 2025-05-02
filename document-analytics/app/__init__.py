@@ -1,0 +1,1 @@
+"""Document Analytics application package."""

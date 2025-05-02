@@ -1,0 +1,1 @@
+"""Document Analytics API endpoints package."""

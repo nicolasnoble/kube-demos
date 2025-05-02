@@ -1,0 +1,10 @@
+flask==3.0.2
+werkzeug==3.0.1
+pytest==8.3.5
+click==8.1.7
+pyzmq==26.4.0
+markdown-it-py==3.0.0
+pytest-mock==3.14.0
+requests==2.31.0
+gunicorn==22.0.0
+kubernetes==29.0.0  # Added Kubernetes Python client
