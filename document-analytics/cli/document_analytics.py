@@ -33,16 +33,20 @@ def parse_args():
                         help='Topic to analyze (can be specified multiple times)')
     
     # Service configuration
-    parser.add_argument('--local', action='store_true',
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument('--local', action='store_true',
                         help='Run in local mode without services')
+    mode_group.add_argument('--hybrid', action='store_true',
+                        help='Run in hybrid mode: use API services with local processes (no Kubernetes)')
+    mode_group.add_argument('--k8s', action='store_true',
+                        help='Use with Kubernetes (will rewrite paths)')
+    
     parser.add_argument('--service-url', type=str, default='http://localhost:8080',
                         help='URL of the document analytics service')
     parser.add_argument('--num-processors', type=int, default=2,
                         help='Number of document processors to use')
     
     # Kubernetes options
-    parser.add_argument('--k8s', action='store_true',
-                        help='Use with Kubernetes (will rewrite paths)')
     parser.add_argument('--configmap-path', type=str, default='/documents',
                         help='Path where the document ConfigMap is mounted in K8s pods')
     
@@ -142,7 +146,7 @@ def rewrite_paths_for_k8s(documents: List[str], configmap_path: str) -> List[str
 
 
 def process_with_services(documents: List[str], topics: List[str], service_url: str, 
-                          num_processors: int, use_k8s: bool = False, 
+                          num_processors: int, use_k8s: bool = False, use_hybrid: bool = False,
                           configmap_path: str = '/documents',
                           debug: bool = False) -> Dict[str, Dict[str, Any]]:
     """Process documents using the document analytics services.
@@ -153,6 +157,7 @@ def process_with_services(documents: List[str], topics: List[str], service_url: 
         service_url: URL of the document analytics service
         num_processors: Number of document processors to use
         use_k8s: Whether to rewrite paths for Kubernetes
+        use_hybrid: Whether to use hybrid mode (local processes instead of k8s)
         configmap_path: Path where the ConfigMap is mounted in K8s pods
         debug: Whether to fetch pod logs before cleanup
         
@@ -171,12 +176,16 @@ def process_with_services(documents: List[str], topics: List[str], service_url: 
     else:
         doc_paths = abs_documents
     
-    # Start the services
-    print("Starting services...")
+    # Set mode based on the deployment type
+    mode = "process" if use_hybrid else "kubernetes"
+    
+    # Start the services with the appropriate mode
+    print(f"Starting services in {mode} mode...")
     response = requests.post(f"{service_url}/start", json={
         "documents": doc_paths,
         "topics": topics,
-        "num_processors": num_processors
+        "num_processors": num_processors,
+        "mode": mode  # Pass the deployment mode to the API
     })
     
     if response.status_code != 200:
@@ -258,7 +267,8 @@ def process_with_services(documents: List[str], topics: List[str], service_url: 
         print("Timed out waiting for results")
     
     # In debug mode, fetch pod logs before cleanup
-    if debug:
+    # (Only available in Kubernetes mode)
+    if debug and not use_hybrid:
         pod_logs = fetch_pod_logs(service_url)
         if pod_logs:
             print("\n===================== POD LOGS ======================\n")
@@ -374,6 +384,7 @@ def main():
             args.service_url, 
             args.num_processors,
             use_k8s=args.k8s,
+            use_hybrid=args.hybrid,
             configmap_path=args.configmap_path,
             debug=args.debug
         )
