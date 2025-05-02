@@ -46,7 +46,7 @@ The system consists of several microservices:
 2. **Document Processors**: A worker pool that processes individual markdown files and broadcasts content by topic.
 3. **Topic Aggregators**: Services that listen for content from specific topics and calculate metrics.
 
-All services communicate using ZeroMQ for efficient message passing.
+The API service orchestrates the entire process, dynamically creating and managing the Worker Queue, Document Processors, and Topic Aggregators as needed. It communicates with the Kubernetes API to create and manage these components, and communicates with them using HTTP. The Document Processors and Topic Aggregators are implemented as separate microservices, allowing for scalability and flexibility in deployment, and communicate using ZeroMQ.
 
 ## Prerequisites
 
