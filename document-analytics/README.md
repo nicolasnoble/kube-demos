@@ -136,7 +136,7 @@ The CLI tool can be used in two modes:
 When running in Kubernetes mode, the CLI tool will send requests to the API service, which will then distribute the work to the Document Processors and Topic Aggregators. It may be necessary to forward the API service port to access it locally:
 
 ```bash
-kubectl port-forward service/document-analytics-api 30080:80
+kubectl port-forward service/document-analytics-api 8080:80
 ```
 
 #### Important Note About Document Glob Patterns
