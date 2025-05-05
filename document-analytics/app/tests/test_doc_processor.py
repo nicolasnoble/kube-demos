@@ -14,8 +14,16 @@ from app.api.doc_processor import DocumentProcessor
 
 @pytest.fixture
 def doc_processor():
-    """Create a DocumentProcessor instance for testing."""
-    return DocumentProcessor()
+    """Create a DocumentProcessor instance for testing with mocked ZMQ socket."""
+    with patch('app.api.doc_processor.zmq.Context') as mock_context:
+        # Setup a mock pub socket
+        mock_pub_socket = MagicMock()
+        mock_context.return_value.socket.return_value = mock_pub_socket
+        
+        processor = DocumentProcessor()
+        # Ensure we're using the mock socket
+        assert processor.pub_socket == mock_pub_socket
+        return processor
 
 
 def test_document_processor_initialization(doc_processor):
@@ -25,35 +33,20 @@ def test_document_processor_initialization(doc_processor):
 
 @patch('app.api.doc_processor.zmq.Context')
 def test_start_server(mock_context, doc_processor):
-    """Test starting the document processor server."""
-    # Setup mock sockets
-    mock_rep_socket = MagicMock()
-    mock_pub_socket = MagicMock()
-    mock_context.return_value.socket.side_effect = [mock_rep_socket, mock_pub_socket]
+    """Test the Flask server initialization instead of the start_server method."""
+    # Since DocumentProcessor now uses Flask instead of a start_server method,
+    # we'll test that the Flask app is initialized properly
+    from app.api.doc_processor import app as flask_app
     
-    # Mock the poll method to return once and then raise an exception to exit the loop
-    mock_poller = MagicMock()
-    mock_poller.poll.side_effect = [[(mock_rep_socket, 1)], KeyboardInterrupt]
-    mock_rep_socket.recv_json.return_value = {"action": "process", "filepath": "/path/to/doc.md"}
+    assert flask_app is not None
+    # The app name is actually the module name, so we'll verify it contains 'doc_processor'
+    assert 'doc_processor' in flask_app.name
     
-    # Patch ZMQ Poller class
-    with patch('app.api.doc_processor.zmq.Poller', return_value=mock_poller):
-        # Patch the process_document method
-        with patch.object(doc_processor, 'process_document', return_value={"status": "success"}):
-            # Instead of expecting KeyboardInterrupt, we'll check if the code processes the message
-            try:
-                doc_processor.start_server()
-            except KeyboardInterrupt:
-                pass
-            
-            # Verify socket bindings
-            assert mock_rep_socket.bind.called
-            assert mock_pub_socket.bind.called
-            
-            # Verify message processing
-            assert mock_rep_socket.recv_json.called
-            assert mock_rep_socket.send_json.called
-            mock_rep_socket.send_json.assert_called_with({"status": "success"})
+    # Test the health_check endpoint
+    with flask_app.test_client() as client:
+        response = client.get('/health')
+        assert response.status_code == 200
+        assert b'"status":"healthy"' in response.data
 
 
 @patch('app.api.doc_processor.extract_topics')
@@ -94,15 +87,15 @@ Content for topic 2."""
         os.unlink(filepath)
 
 
-@patch('app.api.doc_processor.zmq.Context')
-def test_publish_topic(mock_context, doc_processor):
+def test_publish_topic(doc_processor):
     """Test publishing a topic."""
-    # Setup mock socket
-    mock_socket = MagicMock()
-    doc_processor.pub_socket = mock_socket
+    # pub_socket is already mocked in the fixture
     
     # Call publish_topic
     doc_processor.publish_topic("Test Topic", "Test content")
     
     # Verify socket publish
-    mock_socket.send_multipart.assert_called_once()
+    doc_processor.pub_socket.send_multipart.assert_called_once_with([
+        b'Test Topic',
+        b'Test content'
+    ])
