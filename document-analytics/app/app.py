@@ -19,6 +19,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from app import k8s_utils
 from app import process_utils
+from app import k8s_deployments
 
 # Configure logging
 log_level = os.environ.get('LOG_LEVEL', 'INFO')
@@ -76,7 +77,7 @@ def create_worker_queue():
         dict: Service details
     """
     if DEPLOYMENT_MODE == 'kubernetes':
-        return create_worker_queue_deployment()
+        return k8s_deployments.create_worker_queue_deployment()
     else:
         return process_utils.create_worker_queue_process()
 
@@ -91,7 +92,7 @@ def create_doc_processor(num_replicas=2):
         dict: Service details
     """
     if DEPLOYMENT_MODE == 'kubernetes':
-        return create_doc_processor_deployment(num_replicas)
+        return k8s_deployments.create_doc_processor_deployment(num_replicas)
     else:
         # For process mode, we create just one doc processor for simplicity
         # This could be extended to create multiple processors if desired
@@ -108,7 +109,7 @@ def create_topic_aggregator(topic):
         dict: Service details
     """
     if DEPLOYMENT_MODE == 'kubernetes':
-        return create_topic_aggregator_deployment(topic)
+        return k8s_deployments.create_topic_aggregator_deployment(topic)
     else:
         return process_utils.create_topic_aggregator_process(topic)
 
