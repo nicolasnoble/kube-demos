@@ -40,6 +40,23 @@ This intermediate example shows how to build and deploy a distributed system tha
 - Kubernetes RBAC implementation
 - Worker queue distribution pattern
 
+### 3. [Python Distributed Guide](./python-distributed-guide/)
+
+A comprehensive documentation resource on:
+- Best practices for Python in distributed environments
+- Implementation patterns for Kubernetes deployments
+- Practical advice for real-world distributed systems
+
+This guide serves as a reference for developers looking to write robust, scalable Python applications for distributed environments like Kubernetes.
+
+**Key topics:**
+- State management in distributed systems
+- Inter-service communication patterns
+- Resilience and error handling
+- Resource allocation and management
+- Security considerations for distributed applications
+- Testing distributed systems
+
 ## Prerequisites
 
 To run these examples, you'll need:
