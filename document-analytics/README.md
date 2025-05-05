@@ -15,6 +15,9 @@ This project demonstrates a complex Kubernetes deployment with multiple microser
 ├── app/                       # API service code
 │   ├── __init__.py            # Package marker
 │   ├── app.py                 # Main application entry point
+│   ├── k8s_deployments.py     # Kubernetes deployment management
+│   ├── k8s_utils.py           # Kubernetes utilities
+│   ├── process_utils.py       # Process utilities
 │   ├── api/                   # API endpoints
 │   │   ├── __init__.py        # Package marker
 │   │   ├── worker_queue.py    # Worker queue service
@@ -22,6 +25,7 @@ This project demonstrates a complex Kubernetes deployment with multiple microser
 │   │   └── topic_aggregator.py# Topic aggregator service
 │   └── tests/                 # Unit tests
 │       ├── __init__.py        # Package marker
+│       ├── test_doc_analytics_lib.py # Tests for analytics library
 │       ├── test_worker_queue.py     # Tests for worker queue
 │       ├── test_doc_processor.py    # Tests for document processor
 │       └── test_topic_aggregator.py # Tests for topic aggregator
@@ -29,9 +33,13 @@ This project demonstrates a complex Kubernetes deployment with multiple microser
 │   └── document_analytics.py  # CLI tool to process documents
 ├── data/                      # Sample data files
 │   └── documents/             # Markdown documents for testing
+│       ├── sample1.md         # Sample document 1
+│       ├── sample2.md         # Sample document 2
+│       └── sample3.md         # Sample document 3
 ├── kubernetes/                # Kubernetes configurations
-│   └── api.yaml               # API service deployment
-└── setup.sh                   # Setup script
+│   ├── api.yaml               # API service deployment
+│   ├── rbac.yaml              # RBAC permissions for K8s API access
+│   └── README.md              # Kubernetes deployment instructions
 ```
 
 ## Overview
@@ -46,7 +54,14 @@ The system consists of several microservices:
 2. **Document Processors**: A worker pool that processes individual markdown files and broadcasts content by topic.
 3. **Topic Aggregators**: Services that listen for content from specific topics and calculate metrics.
 
-The API service orchestrates the entire process, dynamically creating and managing the Worker Queue, Document Processors, and Topic Aggregators as needed. It communicates with the Kubernetes API to create and manage these components, and communicates with them using HTTP. The Document Processors and Topic Aggregators are implemented as separate microservices, allowing for scalability and flexibility in deployment, and communicate using ZeroMQ.
+The API service orchestrates the entire process, dynamically creating and managing the Worker Queue, Document Processors, and Topic Aggregators as needed. It communicates with the Kubernetes API to create and manage these components. The Document Processors and Topic Aggregators are implemented as separate microservices, allowing for scalability and flexibility in deployment.
+
+#### Communication Architecture
+
+The system uses a hybrid approach for inter-service communication:
+
+- **HTTP REST API**: Used for Worker Queue to Document Processor communication (RESTful API endpoints)
+- **ZeroMQ PUB/SUB**: Used for Document Processor to Topic Aggregator communication (efficient topic-based messaging)
 
 ## Prerequisites
 
@@ -79,7 +94,7 @@ pip install -r requirements.txt
 ### Running Tests
 
 ```bash
-cd app && python -m pytest -v
+cd document-analytics && python -m pytest app/tests -v
 ```
 
 ## Building and Deploying
@@ -160,27 +175,28 @@ The system is implemented using a dynamic pod deployment approach. The main API 
 ### Worker Queue
 
 The Worker Queue is responsible for:
-- Scanning the document list
-- Distributing documents to Document Processors
-- Monitoring processing progress
+- Registering documents for processing
+- Distributing documents to Document Processors via HTTP requests
+- Tracking processing progress
 
-The Worker Queue is dynamically created by the API service when analysis is requested.
+The Worker Queue is dynamically created by the API service when analysis is requested and provides RESTful API endpoints for communication.
 
 ### Document Processor
 
 Document Processors:
 - Parse Markdown files to identify topics (H1 headers)
 - Extract content for each topic
-- Broadcast content to Topic Aggregators based on topic names
+- Broadcast content to Topic Aggregators based on topic names using ZeroMQ PUB/SUB
 
-Multiple Document Processor pods are dynamically created by the API service based on workload requirements.
+Multiple Document Processor pods are dynamically created by the API service based on workload requirements. Each Document Processor exposes a Flask REST API for receiving processing requests from the Worker Queue.
 
 ### Topic Aggregator
 
 Topic Aggregators:
-- Subscribe to content for specific topics
+- Subscribe to content for specific topics via ZeroMQ
 - Count lines, words, and characters in the content
 - Aggregate results for reporting
+- Expose metrics via a REST API
 
 One Topic Aggregator pod is created dynamically for each topic being analyzed.
 
@@ -192,11 +208,18 @@ The API service automatically creates and manages all required microservices:
 - Sets up proper communication between all components
 - Cleans up resources when analysis is complete
 
-## Using ZeroMQ for Communication
+## Communication Details
 
-This project uses ZeroMQ for inter-service communication:
-- REQ/REP pattern for Worker Queue to Document Processor communication
-- PUB/SUB pattern for Document Processor to Topic Aggregator communication
+This project uses a hybrid communication approach:
+
+- **HTTP REST APIs**: Used for:
+  - CLI to API service communication
+  - Worker Queue to Document Processor task distribution
+  - API service to Topic Aggregator metrics collection
+
+- **ZeroMQ PUB/SUB**: Used for:
+  - Document Processor to Topic Aggregator content distribution
+  - Efficient topic-based message delivery
 
 ## Security Considerations
 
@@ -205,3 +228,4 @@ This demo focuses on functionality, but in a production environment, consider:
 - Using TLS for secure communication
 - Implementing network policies
 - Setting up proper resource quotas
+- Using Kubernetes Secrets for sensitive information
