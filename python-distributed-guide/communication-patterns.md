@@ -40,7 +40,7 @@ import requests
 def call_service(service_url, payload):
     try:
         response = requests.post(
-            f"http://{service_url}/api/process",
+            f"http://{service_url}/api/item",
             json=payload,
             timeout=5  # Always include timeouts
         )
