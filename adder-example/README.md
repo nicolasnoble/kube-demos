@@ -190,6 +190,9 @@ kubectl get nodes
 
 ```bash
 docker build -t adder-service:latest .
+
+# only necessary for MiniKube
+minikube image load adder-service:latest
 ```
 
 ### 2. Deploy to Kubernetes
